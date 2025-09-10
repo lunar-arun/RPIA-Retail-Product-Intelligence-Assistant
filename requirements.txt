@@ -1,0 +1,14 @@
+pandas
+numpy
+scikit-learn
+matplotlib
+seaborn
+langchain
+openai
+sentence-transformers
+faiss-cpu
+streamlit
+flask
+python-dotenv
+azure-storage-blob
+tiktoken
