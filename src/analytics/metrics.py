@@ -53,3 +53,45 @@ def compare_products(df: pd.DataFrame, product_names: list[str]) -> pd.DataFrame
 
     summary = product_summary(df)
     return summary[summary["product_name"].isin(product_names)].reset_index(drop=True)
+
+
+def sentiment_mover(df: pd.DataFrame, top_n: int = 5) -> pd.DataFrame:
+    """Compute week-over-week positive-sentiment delta per product.
+
+    Returns a DataFrame with columns:
+        product_name, latest_pos_pct, prev_pos_pct, delta
+    sorted by |delta| descending, limited to *top_n* rows.
+
+    Used by the PDF report to highlight the biggest sentiment movers.
+    """
+    if df.empty or "sentiment" not in df.columns or "review_date" not in df.columns:
+        return pd.DataFrame(columns=["product_name", "latest_pos_pct", "prev_pos_pct", "delta"])
+
+    tmp = df.copy()
+    tmp["week"] = tmp["review_date"].dt.to_period("W")
+
+    weekly = (
+        tmp.groupby(["product_name", "week"])
+        .apply(lambda g: (g["sentiment"] == "POSITIVE").mean() * 100, include_groups=False)
+        .reset_index(name="pos_pct")
+    )
+
+    results = []
+    for product, grp in weekly.groupby("product_name"):
+        grp = grp.sort_values("week")
+        if len(grp) < 2:
+            continue
+        latest = float(grp.iloc[-1]["pos_pct"])
+        prev = float(grp.iloc[-2]["pos_pct"])
+        results.append(
+            {"product_name": product, "latest_pos_pct": round(latest, 1),
+             "prev_pos_pct": round(prev, 1), "delta": round(latest - prev, 1)}
+        )
+
+    if not results:
+        return pd.DataFrame(columns=["product_name", "latest_pos_pct", "prev_pos_pct", "delta"])
+
+    out = pd.DataFrame(results)
+    out["abs_delta"] = out["delta"].abs()
+    return out.sort_values("abs_delta", ascending=False).drop(columns="abs_delta").head(top_n).reset_index(drop=True)
+
