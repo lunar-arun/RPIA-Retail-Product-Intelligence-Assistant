@@ -25,19 +25,10 @@ sys.path.append(str(ROOT_DIR))
 import pandas as pd
 
 from src.config import RAW_REVIEWS_PATH, CLEAN_REVIEWS_PATH, SENTIMENT_REVIEWS_PATH
+from src.data.cleaning import clean_reviews
 from src.nlp.sentiment_analyzer import tag_sentiment
 from src.search.retrieval_service import TfidfRetrievalService
 
-
-def clean_reviews(df: pd.DataFrame) -> pd.DataFrame:
-    """Basic, dependency-free cleaning of the raw review data."""
-    df = df.dropna(subset=["review_text", "product_name"]).copy()
-    df.columns = [c.lower().strip() for c in df.columns]
-    df["review_text"] = df["review_text"].astype(str).str.strip()
-    df = df[df["review_text"] != ""]
-    df["product_name"] = df["product_name"].astype(str).str.strip()
-    df = df.drop_duplicates(subset=["product_name", "review_text", "review_date"])
-    return df.reset_index(drop=True)
 
 
 def main() -> None:

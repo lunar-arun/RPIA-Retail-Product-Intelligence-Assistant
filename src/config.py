@@ -34,3 +34,15 @@ RETRIEVAL_INDEX_PATH = MODELS_DIR / "retrieval_index.pkl"
 #   OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 #
 USE_REMOTE_ANSWER_SERVICE = os.getenv("RPIA_USE_REMOTE_ANSWER_SERVICE", "false").lower() == "true"
+
+# --- Optional local Hugging Face sentiment model ----------------------------
+# When True, tag_sentiment() uses distilbert-base-uncased-finetuned-sst-2-english
+# (downloaded once to the local HF cache, ~260 MB, then run fully offline).
+# When False (default) the lightweight lexicon-based scorer is used instead —
+# no download, no network access, fully deterministic.
+# Enable with:  RPIA_USE_HF_SENTIMENT_MODEL=true python scripts/build_pipeline.py
+USE_HF_SENTIMENT_MODEL: bool = (
+    os.getenv("RPIA_USE_HF_SENTIMENT_MODEL", "false").lower() == "true"
+)
+HF_SENTIMENT_MODEL: str = "distilbert-base-uncased-finetuned-sst-2-english"
+

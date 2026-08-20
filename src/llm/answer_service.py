@@ -1,32 +1,12 @@
 """
 Answer generation.
-
-`AnswerGenerator` is the abstraction the rest of the app talks to. Today the
-only implementation is `LocalAnswerGenerator`, which synthesizes an answer
-from retrieved reviews using simple, transparent rules -- no external LLM
-API call, no API key required.
-
-Future API integration
------------------------
-To add a real LLM later (e.g. the Anthropic or OpenAI API), implement a new
-class that satisfies the same interface, for example:
-
-    class RemoteAnswerGenerator(AnswerGenerator):
-        def __init__(self, api_key: str):
-            ...
-        def generate(self, query, retrieved_reviews) -> AnswerResult:
-            # call the hosted API with `retrieved_reviews` as context
-            ...
-
-and select it in `get_answer_generator()` based on `src.config`
-(`USE_REMOTE_ANSWER_SERVICE`) -- no other file needs to change, since every
-caller only depends on the `AnswerGenerator` interface below.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import Any
 
 import pandas as pd
 
@@ -38,6 +18,7 @@ class AnswerResult:
     negative_count: int
     neutral_count: int
     sources: pd.DataFrame = field(repr=False)
+    suggested_chart: Any = field(default=None, repr=False)
 
 
 class AnswerGenerator(ABC):
@@ -50,6 +31,13 @@ class LocalAnswerGenerator(AnswerGenerator):
     """Rule-based synthesis: no external calls, fully offline."""
 
     def generate(self, query: str, retrieved_reviews: pd.DataFrame) -> AnswerResult:
+        suggested_chart = None
+        try:
+            from src.analytics.chart_picker import suggest_chart_for_query
+            suggested_chart = suggest_chart_for_query(retrieved_reviews)
+        except Exception:
+            pass
+
         if retrieved_reviews.empty:
             return AnswerResult(
                 summary=(
@@ -60,13 +48,37 @@ class LocalAnswerGenerator(AnswerGenerator):
                 negative_count=0,
                 neutral_count=0,
                 sources=retrieved_reviews,
+                suggested_chart=suggested_chart,
             )
 
-        pos = int((retrieved_reviews["sentiment"] == "POSITIVE").sum())
-        neg = int((retrieved_reviews["sentiment"] == "NEGATIVE").sum())
-        neu = int((retrieved_reviews["sentiment"] == "NEUTRAL").sum())
+        # Handle sentiment counting safely
+        if "sentiment" in retrieved_reviews.columns:
+            pos = int((retrieved_reviews["sentiment"] == "POSITIVE").sum())
+            neg = int((retrieved_reviews["sentiment"] == "NEGATIVE").sum())
+            neu = int((retrieved_reviews["sentiment"] == "NEUTRAL").sum())
+        elif "star_rating" in retrieved_reviews.columns:
+            pos = int((retrieved_reviews["star_rating"] > 3).sum())
+            neg = int((retrieved_reviews["star_rating"] < 3).sum())
+            neu = int((retrieved_reviews["star_rating"] == 3).sum())
+        else:
+            pos, neg, neu = 0, 0, len(retrieved_reviews)
+
         total = len(retrieved_reviews)
-        products = retrieved_reviews["product_name"].unique().tolist()
+
+        # Handle product name column safely
+        prod_col = "product_name" if "product_name" in retrieved_reviews.columns else (
+            "product" if "product" in retrieved_reviews.columns else None
+        )
+
+        if prod_col:
+            products = retrieved_reviews[prod_col].unique().tolist()
+            product_phrase = (
+                f"across {', '.join(str(p) for p in products[:3])}"
+                if len(products) > 1
+                else f"for {products[0]}"
+            )
+        else:
+            product_phrase = "in the retrieved dataset"
 
         if pos > neg:
             lean = "generally positive"
@@ -75,22 +87,24 @@ class LocalAnswerGenerator(AnswerGenerator):
         else:
             lean = "mixed"
 
-        product_phrase = (
-            f"across {', '.join(products[:3])}"
-            if len(products) > 1
-            else f"for {products[0]}"
-        )
-
         summary_lines = [
             f"Based on {total} matching review(s) {product_phrase}, sentiment is **{lean}** "
             f"({pos} positive / {neg} negative / {neu} neutral)."
         ]
 
+        # Top relevant review snippet
         top = retrieved_reviews.iloc[0]
-        summary_lines.append(
-            f"Most relevant mention ({top['product_name']}, {top['sentiment'].lower()}): "
-            f"\u201c{top['review_text']}\u201d"
+        text_col = next(
+            (c for c in ["review_text", "review", "comment", "text", "description"] if c in top.index),
+            None,
         )
+        if text_col and pd.notna(top[text_col]):
+            prod_info = f"{top[prod_col]}, " if prod_col and pd.notna(top[prod_col]) else ""
+            sent_info = f"{str(top['sentiment']).lower()}" if "sentiment" in top.index and pd.notna(top['sentiment']) else "mention"
+            summary_lines.append(
+                f"Most relevant mention ({prod_info}{sent_info}): "
+                f"\u201c{top[text_col]}\u201d"
+            )
 
         return AnswerResult(
             summary="\n\n".join(summary_lines),
@@ -98,6 +112,7 @@ class LocalAnswerGenerator(AnswerGenerator):
             negative_count=neg,
             neutral_count=neu,
             sources=retrieved_reviews,
+            suggested_chart=suggested_chart,
         )
 
 
